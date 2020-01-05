@@ -1,0 +1,6 @@
+[submodule "include/rapidjson"]
+	path = include/rapidjson
+	url = https://github.com/Tencent/rapidjson.git
+[submodule "include/pybind11"]
+	path = include/pybind11
+	url = https://github.com/pybind/pybind11.git
