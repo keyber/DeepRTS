@@ -16,7 +16,7 @@ A = {
     "q": (3, 11, -1),
     "s": (6, 11, -1),
     "d": (4, 11, -1),
-    "h": (12, 301, 10),
+    "h": (12, 301, 6),
     "0": (13, 601, 1),
     # "1": (14, 10, -1),
     # "2": (15, 10, -1),
@@ -216,7 +216,7 @@ class Agent:
             
             for i in range(self.warmup_max_iter):
                 if loss_old[-1] < self.model_max_loss:
-                    diff = sum(abs(loss_old[i] - loss_old[i + 1]) for i in range(len(loss_old) - 1)) / len(loss_old)
+                    diff = sum(abs(loss_old[i] - loss_old[i + 1]) for i in range(len(loss_old) - 1))
                     if diff < self.warmup_loss_convergence_eps:
                         break
                 
@@ -239,8 +239,9 @@ class Agent:
                 plt.pause(1e-6)
                 plt.clf()
             
-            if loss_old[-1] >= self.model_max_loss:
-                print("warning model did not finish to learn action", action, )
+            else:
+                print("warning model did not finish to learn action", action)
+            print(i, "iteration", "last loss", loss_old[-1])
     
     def update(self):
         self.t += 1
@@ -362,9 +363,6 @@ def pprint(game_repr, p):
 
 
 def _main_do_action(game, list_action, reset=True):
-    game.reset()
-    time.sleep(1.)
-    
     p = game.players[0]
     # pprint(GameRepresentation.create_representation_from_game(game), p)
     for action in list_action:
@@ -423,13 +421,14 @@ def didacticiel(game, k=10):
     list_states = []
     # construit un TC, fait le tour, va en haut à droite, récolte
     list_actions = "zdds0zzz0dsdds0dsdssqsqqzq0qzzdzzdzdzdz0dzdzhhsdsd0hsdsdsdsdsdsd0h"
-    list_actions += "".join(random.choices(list(A.keys()), k=k))
+    for a in random.choices(list(A.keys()), k=k):
+        list_actions += 3*a
     list_states.append(GameRepresentation.create_representation_from_game(game))
     
     list_pos = []
     
     for action in list_actions:
-        print(p.get_targeted_unit(), action, A[action], p.food, p.food_consumption, p.gold, p.lumber)
+        # print(p.get_targeted_unit(), action, A[action], p.food, p.food_consumption, p.gold, p.lumber)
         s = list_states[-1].map_state
         found = False
         for xi in range(s.shape[0]):
@@ -439,7 +438,7 @@ def didacticiel(game, k=10):
                     p.do_manual_action(LEFT_CLICK, xi, yi)
                     game.update()
                     u = p.get_targeted_unit()
-                    print(xi, yi, u, u.lumber_carry, u.gold_carry)
+                    # print(xi, yi, u, u.lumber_carry, u.gold_carry)
                     list_pos.append((xi, yi))
         assert found
         
@@ -447,7 +446,7 @@ def didacticiel(game, k=10):
         
         list_states.append(GameRepresentation.create_representation_from_game(game))
         
-        print()
+        # print()
     
     n = len(list_pos)
     assert len(list_actions) == n, (n, len(list_actions), len(list_states))
@@ -502,10 +501,13 @@ def main():
     game = python.Game(MAP, n_players=1, engine_config=engine_config, gui_config=gui_config)
     game.set_max_fps(int(1e9))  #augmenter les fps lorsqu’on ne veut pas visualiser le jeu
     game.set_max_ups(int(1e9))
+
+    game.reset()
+    time.sleep(1.)
     
     # _main_do_action(game, list_action=A)
     # _main_do_action(game, list_action=["d"] * 1000)
-    _main_do_action(game, list_action="0zdzdzdzdzdzdzdhzdzdzd", reset=False)
+    # _main_do_action(game, list_action="0zdzdzdzdzdzdzdhzdzdzd", reset=False)
     
     targets = [
         # [2, -1, -1, -1],   # créer un TC
