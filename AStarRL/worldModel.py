@@ -6,31 +6,39 @@ LEFT_CLICK = 1
 
 
 class OneActionNet(nn.Module):
-    def __init__(self, map_space, player_space, layers):
+    def __init__(self, state_space, layers):
         super().__init__()
-        self.n_tiles, self.tile_size = map_space
         
         l = []
-        size = self.n_tiles*self.tile_size + player_space
+        size = state_space
+        l.append(nn.BatchNorm1d(size)) #todo 
         for x in layers:
-            # l.append(nn.BatchNorm1d(size)) #todo 
             l.append(nn.Linear(size, x))
             l.append(nn.ReLU())
             size = x
         
-        self.linear_map = nn.Linear(size, map_space)
-        # self.map_act = nn.Sigmoid() # fait dans la loss
+        self.shared_part = nn.Sequential(*l)
         
-        self.linear_player = nn.Linear(size, player_space)  # no activation for regression
         
-        self.layers = nn.Sequential(*l)
+        self.forget = nn.Sequential(
+            nn.Linear(size, state_space),
+            nn.Sigmoid()
+        )
+        
+        self.linear = nn.Linear(state_space, state_space)
+        
+        # sigmoid done in loss
+        # no activation for regression
+        
     
     def forward(self, x):
-        b = x.shape[0]
-        hid = self.layers(x)
-        map_ = self.map_act(self.linear_map(hid))
-        play = self.linear_player(hid)
-        return map_.reshape((b, self.n_tiles, self.tile_size)), play
+        hid = self.shared_part(x)
+        
+        x1 = self.forget(hid)
+        x2 = x * x1
+        x3 = x * (-x1 + 1)
+        
+        return x2 + self.linear(x3)
 
 
 class GameRepresentation:
@@ -132,17 +140,18 @@ class GameRepresentation:
         return torch.tensor(res, dtype=dtype)
     
     def create_from_new_vector(self, coo, vector):
-        map_vector, player_vector = vector
+        data = (vector.detach() + .5).int()
         
-        map_data = (map_vector.detach() + .5).int()
-        player_state = (player_vector.detach() + .5).int()
+        map_data = data[:-GameRepresentation.PLAY_DESC].reshape((-1, GameRepresentation.TILE_DESC))
+        
+        play_state = data[-GameRepresentation.PLAY_DESC:]
         
         map_state = self.map_state.copy()
         for x, y in GameRepresentation.COO:
             if not self._is_outside(x + coo[0], y + coo[1]):
                 map_state[x + coo[0], y + coo[1]] = map_data[x, y]
         
-        return GameRepresentation(map_state, player_state, coo, vector)
+        return GameRepresentation(map_state, play_state, coo, vector)
     
     def __eq__(self, other):
         return np.all(self.map_state == other.map_state) \
@@ -158,9 +167,8 @@ class GameRepresentation:
 class WorldModel(nn.Module):
     def __init__(self, state_space, action_space, layers):
         super().__init__()
-        map_space, player_space = state_space
         
-        one_action_net = {a: OneActionNet(map_space, player_space,layers) for a in action_space}
+        one_action_net = {a: OneActionNet(state_space,layers) for a in action_space}
         
         self.nets = nn.ModuleDict(one_action_net)
     

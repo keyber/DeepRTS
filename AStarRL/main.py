@@ -295,8 +295,8 @@ def main():
                 return False
         return True
     
-    s_space = ((len(GameRepresentation.COO), GameRepresentation.TILE_DESC), GameRepresentation.PLAY_DESC)
-    agent = Agent(s_space=s_space, action_space=A[1], objectives=(targets[0], H, is_goal))
+    # s_space = ((len(GameRepresentation.COO), GameRepresentation.TILE_DESC), GameRepresentation.PLAY_DESC)
+    agent = Agent(s_space=GameRepresentation.get_vector_size(), action_space=A[1], objectives=(targets[0], H, is_goal))
     
     train_on_didacticiel(game, agent, agent_save_path="/home/keyvan/DeepRTS/AStarRL/world_model0.pth",
                          didacticiel_save_path="/home/keyvan/DeepRTS/AStarRL/dida")

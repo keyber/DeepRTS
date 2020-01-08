@@ -9,31 +9,47 @@ import matplotlib.pyplot as plt
 a_2_iOut = {"z": 2, "q": 5, "s": 10, "d": 7}
 
 def int_loss(pred, true, trg_idx, src_idx=6):
-    batch_size = pred.shape[0]
+    pred = pred.detach()
+    true = true.detach()
+    pred_map, pred_play = pred[:, :-GameRepresentation.PLAY_DESC], pred[:, -GameRepresentation.PLAY_DESC:]
+    true_map, true_play = true[:, :-GameRepresentation.PLAY_DESC], true[:, -GameRepresentation.PLAY_DESC:]
     
-    pred = (pred.detach()+.5).int()
-    diff = (true - pred).abs()
+    pred_map = nn.functional.sigmoid(pred_map)
+    pred_map_int = (pred_map + .5).int()
+    pred_play_int = (pred_play + .5).int()
     
-    m, p = diff[:, :-GameRepresentation.PLAY_DESC], diff[:, -GameRepresentation.PLAY_DESC:]
-    m = torch.sum(m.reshape((batch_size, len(GameRepresentation.COO), GameRepresentation.TILE_DESC)), dim=2)
+    m = (true_map - pred_map_int).abs() # batch, map_size, tile_size
+    p = (true_play - pred_play_int).abs() # batch, player_size
+    
+    assert torch.all(m == m.int().float())
+    assert torch.all(p == p.int().float())
+    
+    m = m.reshape((m.shape[0], len(GameRepresentation.COO), GameRepresentation.TILE_DESC))
+    m = torch.sum(m, dim=2)
     
     return {
         "map_n_wrongs": torch.sum(m != 0, dim=1, dtype=torch.float32).mean(),
         "player_n_wrongs": torch.sum(p != 0, dim=1, dtype=torch.float32).mean(),
         "map_src_count":m[:, src_idx].mean(),
         "map_trg_count":m[:, trg_idx].mean(),
+        "map_mse" : nn.L1Loss()(pred_map, true_map)
     }
     
 class RepresLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, player_weight):
         super().__init__()
         self.map_loss = nn.BCEWithLogitsLoss()
         self.player_loss = nn.MSELoss()
+        self.player_weight = player_weight
     
     def forward(self, pred, true):
-        pred_map, pred_play = pred
-        true_map, true_play = true
-        return 
+        pred_map, pred_play = pred[:, :-GameRepresentation.PLAY_DESC], pred[:, -GameRepresentation.PLAY_DESC:]
+        true_map, true_play = true[:, :-GameRepresentation.PLAY_DESC], true[:, -GameRepresentation.PLAY_DESC:]
+        
+        map_loss = self.map_loss(pred_map, true_map)
+        play_loss = self.player_loss(pred_play, true_play)
+        return map_loss + self.player_weight * play_loss, (map_loss, play_loss)
+    
 class Agent:
     def __init__(self, s_space, action_space, objectives):
         self.epoch = 0
@@ -42,11 +58,11 @@ class Agent:
         self.action_space = action_space
         
         self.model = WorldModel(s_space, action_space, layers=[512, 256])  #type: WorldModel
-        self.model_loss = nn.SmoothL1Loss()
+        self.model_loss = RepresLoss(player_weight=1.)
         self.model_optim = Adam(self.model.parameters(), lr=1e-3, weight_decay=1e0)
         self.model_max_loss = 1e-3
         self.warmup_loss_convergence_eps = 1e-3
-        self.warmup_max_iter = 100
+        self.warmup_max_iter = 1000
         
         self.mem_state0 = []
         self.mem_action = []
@@ -68,8 +84,9 @@ class Agent:
             action_transitions[action].append((list_states[i], list_pos[i], list_states[i + 1]))
         
         plt.ion()
-        ll = {action: [] for action in action_transitions}
-        ll_test = {action: [] for action in action_transitions}
+        ll_map = {action: [] for action in "z"}#action_transitions
+        ll_play = {action: [] for action in "z"}
+        ll_test = {action: [] for action in "z"}
         
         for action, transitions in action_transitions.items():
             print("learning action", action)
@@ -85,7 +102,7 @@ class Agent:
                         break
                 
                 y_pred = self.model.forward_vec(action, v_in=x)
-                l = self.model_loss(y_pred_map, y_true)
+                l, (l_map, l_play) = self.model_loss(y_pred, y_true)
                 
                 self.model_optim.zero_grad()
                 l.backward()
@@ -102,16 +119,18 @@ class Agent:
                     l_test = self.model_loss(y_pred_test, test[action][1])
                     ll_test[action].append(l_test.item())
                 
-                ll[action].append(l.item())
+                ll_map[action].append(l_map)
+                ll_play[action].append(l_play)
                 
                 if writer is not None:
                     losses = int_loss(y_pred, y_true, trg_idx=a_2_iOut[action])
-                    losses["mse"] = l.item()
+                    losses["BCE_map"] = l_map.item()
+                    losses["MSE_player"] = l_play.item()
                     writer.add_scalars("loss", losses, epoch)
                 
-                # print(ll[action][-1])
-                for a in ll:
-                    plt.plot(range(len(ll[a])), np.log10(ll[a]), label=a)
+                for a in ll_map:
+                    plt.plot(range(len(ll_map[a])), np.log10(ll_map[a]),   label=a + "map")
+                    plt.plot(range(len(ll_play[a])), np.log10(ll_play[a]), label=a + "play")
                 for a in ll_test:
                     plt.plot(range(len(ll_test[a])), np.log10(ll_test[a]), label=a + "t")
                 
@@ -169,7 +188,7 @@ class Agent:
         l = self.model_loss(y_pred, y_true)
         if l > 1e-3:
             print("prediction error, loss:", l.item())
-            # print("pred", y_pred)
+            # print("pred_int", y_pred)
             # print("true", y_true)
             # print()
             self.model_optim.zero_grad()
