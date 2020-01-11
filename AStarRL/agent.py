@@ -1,55 +1,143 @@
 import torch
 from torch import nn
-from torch.optim import Adam
+from torch.optim import SGD, Adam
+from torch.optim.lr_scheduler import ExponentialLR
 from worldModel import GameRepresentation, WorldModel
 import numpy as np
 import heapq
 import matplotlib.pyplot as plt
 
 a_2_iOut = {"z": 2, "q": 5, "s": 10, "d": 7}
+dbg_transitions = []
 
-def int_loss(pred, true, trg_idx, src_idx=6):
+
+class t:
+    def __init__(self, a):
+        self.a = a
+    
+    def __eq__(self, other):
+        return torch.all(self.a == other.a)
+    
+    def __str__(self):
+        return str(np.where(self.a == 0, " ", np.where(self.a == 1, "+", "-")))
+
+
+def int_loss(x, pred, true, trg_idx, src_idx=0, verbose=0, net=None):
     pred = pred.detach()
     true = true.detach()
     pred_map, pred_play = pred[:, :-GameRepresentation.PLAY_DESC], pred[:, -GameRepresentation.PLAY_DESC:]
     true_map, true_play = true[:, :-GameRepresentation.PLAY_DESC], true[:, -GameRepresentation.PLAY_DESC:]
     
-    pred_map = nn.functional.sigmoid(pred_map)
     pred_map_int = (pred_map + .5).int()
     pred_play_int = (pred_play + .5).int()
     
-    m = (true_map - pred_map_int).abs() # batch, map_size, tile_size
-    p = (true_play - pred_play_int).abs() # batch, player_size
+    m = (true_map - pred_map_int).abs()  # batch, map_size, tile_size
+    p = (true_play - pred_play_int).abs()  # batch, player_size
     
     assert torch.all(m == m.int().float())
     assert torch.all(p == p.int().float())
     
     m = m.reshape((m.shape[0], len(GameRepresentation.COO), GameRepresentation.TILE_DESC))
+    
+    if len(dbg_transitions) == 0:
+        x2 = x[:, :-GameRepresentation.PLAY_DESC].reshape_as(m)
+        diff = true_map.reshape_as(m) - x2
+        
+        cpt = [0] * 2
+        for i in range(len(m)):
+            d = t(diff[i])
+            if d not in dbg_transitions:
+                dbg_transitions.append(d)
+                print("ajout de la transition")
+                print(d)
+                print("obtenu à partir de l'état")
+                print(t(x2[i]))
+                print()
+            cpt[dbg_transitions.index(d)] += 1
+        
+        print(cpt)
+        assert len(dbg_transitions) == 2
+    
+    if verbose:
+        assert len(dbg_transitions) == 2
+        cpt = [0, 0]
+        
+        x2 = x[:, :-GameRepresentation.PLAY_DESC].reshape_as(m)
+        diff = true_map.reshape_as(m) - x2
+        for i in range(len(m)):
+            d = t(diff[i])
+            if torch.any(m[i] != 0):
+                cpt[dbg_transitions.index(d)] += 1
+                # print("transition", dbg_transitions.index(d))
+                # print(x2[i])
+                # print()
+                
+                # for j, l in enumerate(x2[i]):
+                #     print(j, "-" if torch.all(l==0) else l)
+                # print()
+                # for j, l in enumerate(m[i]):
+                #     print(j, "-" if torch.all(l==0) else l)
+                # print()
+                # for j, l in enumerate(true_map.reshape_as(m)[i]):
+                #     print(j, "-" if torch.all(l==0) else l)
+                # print()
+                # for j, l in enumerate((true_map.reshape_as(m) - x)[i]):
+                #     print(j, "-" if torch.all(l==0) else l)
+                # for j, l in enumerate((true_map - pred_map_int).reshape_as(m)[i]):
+                #     print(j, "-" if torch.all(l==0) else l)
+                # for j, l in enumerate(pred_map_int.reshape_as(m)[i]):
+                #     print(j, "-" if torch.all(l==0) else l)
+                
+                # print()
+                # input_ = x[i].clone()
+                # input_[-GameRepresentation.PLAY_DESC:]=0
+                # input_ = torch.zeros_like(input_)
+                # input_[4*14+0]=1
+                # print(torch.matmul(net.layers[-1].weight, input_)[:-GameRepresentation.PLAY_DESC].reshape_as(m[i]))
+                
+                # print("\n")
+            
+        # print()
+        print(cpt, sum(cpt))
     m = torch.sum(m, dim=2)
     
     return {
         "map_n_wrongs": torch.sum(m != 0, dim=1, dtype=torch.float32).mean(),
         "player_n_wrongs": torch.sum(p != 0, dim=1, dtype=torch.float32).mean(),
-        "map_src_count":m[:, src_idx].mean(),
-        "map_trg_count":m[:, trg_idx].mean(),
-        "map_mse" : nn.L1Loss()(pred_map, true_map)
+        "map_src_count": m[:, src_idx].mean(),
+        "map_trg_count": m[:, trg_idx].mean(),
+        "map_mse": nn.L1Loss()(pred_map, true_map)
     }
-    
+
+
 class RepresLoss(nn.Module):
-    def __init__(self, player_weight):
+    def __init__(self, player_weight=1.):
         super().__init__()
-        self.map_loss = nn.BCEWithLogitsLoss()
-        self.player_loss = nn.MSELoss()
+        self.map_loss = nn.BCELoss(reduction="none")
+        self.mse = nn.MSELoss()
         self.player_weight = player_weight
     
     def forward(self, pred, true):
         pred_map, pred_play = pred[:, :-GameRepresentation.PLAY_DESC], pred[:, -GameRepresentation.PLAY_DESC:]
         true_map, true_play = true[:, :-GameRepresentation.PLAY_DESC], true[:, -GameRepresentation.PLAY_DESC:]
         
-        map_loss = self.map_loss(pred_map, true_map)
-        play_loss = self.player_loss(pred_play, true_play)
+        # pred_map_int = (pred_map+.5).int()
+        # m = (true_map - pred_map_int).abs()
+        # bce = nn.BCELoss(weight=torch.where(m!=0, torch.tensor([1.]), torch.tensor([0.])))
+        
+        # map_loss = bce(pred_map, true_map)
+        # map_loss = nn.BCEWithLogitsLoss()(pred_map, true_map)
+        # map_loss = torch.mean(self.map_loss(pred_map, true_map))
+        # map_loss = torch.mean(torch.pow(self.map_loss(pred_map, true_map), 2))
+        map_loss = self.mse(pred_map, true_map)        
+        # map_loss = torch.zeros(1)
+        
+        play_loss = self.mse(pred_play, true_play)
+        # play_loss = torch.zeros(1)
+        
         return map_loss + self.player_weight * play_loss, (map_loss, play_loss)
-    
+
+
 class Agent:
     def __init__(self, s_space, action_space, objectives):
         self.epoch = 0
@@ -57,11 +145,13 @@ class Agent:
         self.learning_period = 10
         self.action_space = action_space
         
-        self.model = WorldModel(s_space, action_space, layers=[512, 256])  #type: WorldModel
-        self.model_loss = RepresLoss(player_weight=1.)
-        self.model_optim = Adam(self.model.parameters(), lr=1e-3, weight_decay=1e0)
-        self.model_max_loss = 1e-3
-        self.warmup_loss_convergence_eps = 1e-3
+        self.model = WorldModel(s_space, action_space, layers=[])  #type: WorldModel
+        self.model_loss = RepresLoss()
+        self.model_optim = Adam(self.model.parameters(), lr=1e-1)  #, weight_decay=1e0)
+        # self.model_optim = SGD(self.model.parameters(), lr=1e-2)  #, weight_decay=1e0)
+        self.model_sched = ExponentialLR(self.model_optim, gamma=.1)
+        self.model_max_loss = 1e-9
+        self.warmup_loss_convergence_eps = 1e-9
         self.warmup_max_iter = 1000
         
         self.mem_state0 = []
@@ -84,7 +174,7 @@ class Agent:
             action_transitions[action].append((list_states[i], list_pos[i], list_states[i + 1]))
         
         plt.ion()
-        ll_map = {action: [] for action in "z"}#action_transitions
+        ll_map = {action: [] for action in "z"}  #action_transitions
         ll_play = {action: [] for action in "z"}
         ll_test = {action: [] for action in "z"}
         
@@ -107,6 +197,7 @@ class Agent:
                 self.model_optim.zero_grad()
                 l.backward()
                 self.model_optim.step()
+                self.model_sched.step(epoch // 200)
                 
                 loss_old.pop(0)
                 loss_old.append(l.item())
@@ -123,16 +214,16 @@ class Agent:
                 ll_play[action].append(l_play)
                 
                 if writer is not None:
-                    losses = int_loss(y_pred, y_true, trg_idx=a_2_iOut[action])
+                    losses = int_loss(x, y_pred, y_true, trg_idx=a_2_iOut[action], verbose=1, net=self.model.nets["z"])
                     losses["BCE_map"] = l_map.item()
                     losses["MSE_player"] = l_play.item()
                     writer.add_scalars("loss", losses, epoch)
                 
                 for a in ll_map:
-                    plt.plot(range(len(ll_map[a])), np.log10(ll_map[a]),   label=a + "map")
+                    plt.plot(range(len(ll_map[a])), np.log10(ll_map[a]), label=a + "map")
                     plt.plot(range(len(ll_play[a])), np.log10(ll_play[a]), label=a + "play")
-                for a in ll_test:
-                    plt.plot(range(len(ll_test[a])), np.log10(ll_test[a]), label=a + "t")
+                # for a in ll_test:
+                #     plt.plot(range(len(ll_test[a])), np.log10(ll_test[a]), label=a + "t")
                 
                 plt.legend()
                 plt.draw()
@@ -141,7 +232,7 @@ class Agent:
             
             else:
                 print("warning model did not finish to learn action", action)
-            print(i, "iteration", "last loss train %.2f %.2f" % (loss_old[-2], loss_old[-1]))
+            print(epoch, "iteration", "last loss train %.2f %.2f" % (loss_old[-2], loss_old[-1]))
             if action in test:
                 print("last loss test %.2f" % l_test)
             writer.close()

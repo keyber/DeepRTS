@@ -5,52 +5,80 @@ import numpy as np
 LEFT_CLICK = 1
 
 
+class Clamp(torch.autograd.Function):
+    @staticmethod
+    def forward(_ctx, i, min_val, max_val):
+        return torch.clamp(i, min_val, max_val)
+    
+    @staticmethod
+    def backward(_ctx, grad_output):
+        return grad_output, None, None
+
+
+clamp = Clamp.apply
+
+
 class OneActionNet(nn.Module):
-    def __init__(self, state_space, layers):
+    def __init__(self, state_space, layers, c=None):
         super().__init__()
         
         l = []
         size = state_space
-        l.append(nn.BatchNorm1d(size)) #todo 
+        l.append(nn.BatchNorm1d(size))
         for x in layers:
             l.append(nn.Linear(size, x))
             l.append(nn.ReLU())
             size = x
-        
-        self.shared_part = nn.Sequential(*l)
-        
-        
-        self.forget = nn.Sequential(
-            nn.Linear(size, state_space),
-            nn.Sigmoid()
-        )
-        
-        self.linear = nn.Linear(state_space, state_space)
+        l.append(nn.Linear(size, state_space))
         
         # sigmoid done in loss
         # no activation for regression
         
+        if c is not None:
+            w = torch.zeros_like(l[-1].weight)
+            b = torch.zeros_like(l[-1].bias)
+            
+            i_tile_in = 2
+            i_tile_out = 4
+            
+            n = GameRepresentation.TILE_DESC
+            
+            i_vec_check = [1, 2, 3, 4, 6, 7]
+            i_vec_changed = [5, 7, 8]
+            
+            b[[i_tile_in * n + i for i in i_vec_changed]] = -c
+            b[[i_tile_out * n + i for i in i_vec_changed]] = c
+            
+            for j in i_vec_check:
+                w[[i_tile_in  * n + i for i in i_vec_changed], i_tile_out * n + j] =  c
+                w[[i_tile_out * n + i for i in i_vec_changed], i_tile_out * n + j] = -c
+            
+            l[-1].weight.data = w
+            l[-1].bias.data = b
+
+        self.layers = nn.Sequential(*l)
     
     def forward(self, x):
-        hid = self.shared_part(x)
+        res = self.layers(x)
         
-        x1 = self.forget(hid)
-        x2 = x * x1
-        x3 = x * (-x1 + 1)
+        res = res + x
         
-        return x2 + self.linear(x3)
+        res[:, :-GameRepresentation.PLAY_DESC] = clamp(res[:, :-GameRepresentation.PLAY_DESC], 0., 1.)
+        
+        return res
 
 
 class GameRepresentation:
     COO = np.array([(0, 2),
-                    (-1, 1), (0, 1), (1, 1),
-                    (-2, 0), (-1, 0), (0, 0), (1, 0), (2, 0),
-                    (-1, -1), (0, -1), (1, -1),
-                    (0, -2)])
+                            (-1, 1), (0, 1), (1, 1),
+                            (-2, 0), (-1, 0), (0, 0), (1, 0), (2, 0),
+                            (-1, -1), (0, -1), (1, -1),
+                            (0, -2)])
+    #COO = np.array([(0, 1), (-1, 0), (0, 0), (1, 0), (0, -1)])
     TILE_DESC = 14
     PLAY_DESC = 4
     
-    OUTSIDE = np.array([3] + [0] * (TILE_DESC - 1))  # mur
+    OUTSIDE = np.array([0, 1] + [0] * (TILE_DESC - 2))  # mur
     
     def __init__(self, map_state, player_state, obtained_from_coo=None, obtained_from_vector=None):
         # if type(player_state) is list:
@@ -70,8 +98,11 @@ class GameRepresentation:
         
         s0 = game.get_state()
         
-        # contenu
-        s[:, :, 0:5] = s0[:, :, 0] == np.broadcast_to(np.array([2., 3, 4, 5, 6]), (x, y, 5))
+        # assert np.all((s0[:,:,6]==0) + (s0[:,:,6]==8)), set(list(s0[:, :, 6].reshape(-1)))
+        
+        # type de case
+        s[:, :, 0:5] = s0[:, :, 0].reshape((x, y, 1)) == np.array([2., 3, 4, 5, 6])
+        assert np.all(np.sum(s[:, :, 0:5], axis=2) == 1)
         
         # ownership (modified representation)
         s[:, :, 5] = s0[:, :, 1] + s0[:, :, 2] + s0[:, :, 3]
@@ -82,8 +113,10 @@ class GameRepresentation:
         # est une unité
         s[:, :, 7] = s0[:, :, 3]
         
-        # type de contenu
-        s[:, :, 8:14] = s0[:, :, 4] == np.broadcast_to(np.array([1., 3, 4, 5, 6, 7]), (x, y, 6))
+        # type d'unité/bâtiment
+        s[:, :, 8:14] = s0[:, :, 4].reshape((x, y, 1)) == np.array([1., 3, 4, 5, 6, 7])
+        
+        assert np.all(np.sum(s[:, :, 8:14], axis=2) <= 1)
         
         # vie
         # s[:, :, 14] = s0[:, :, 5]
@@ -140,6 +173,7 @@ class GameRepresentation:
         return torch.tensor(res, dtype=dtype)
     
     def create_from_new_vector(self, coo, vector):
+        assert vector.dtype == int
         data = (vector.detach() + .5).int()
         
         map_data = data[:-GameRepresentation.PLAY_DESC].reshape((-1, GameRepresentation.TILE_DESC))
@@ -168,7 +202,7 @@ class WorldModel(nn.Module):
     def __init__(self, state_space, action_space, layers):
         super().__init__()
         
-        one_action_net = {a: OneActionNet(state_space,layers) for a in action_space}
+        one_action_net = {a: OneActionNet(state_space, layers) for a in action_space}
         
         self.nets = nn.ModuleDict(one_action_net)
     
