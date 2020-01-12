@@ -1,8 +1,8 @@
 import torch
 from DeepRTS import Engine
 from DeepRTS import python
-from agent import Agent, t
-from worldModel import GameRepresentation
+from agent import Agent
+from worldModel import GameRepresentation, tens
 import time
 import os
 import random
@@ -113,7 +113,7 @@ def didacticiel(game, k, save_path=None):
         list_states, list_actions, list_pos = [torch.load(save_path + s + ".pth") for s in ["_s", "_a", "_p"]]
         return list_states, list_actions, list_pos
 
-    model = Agent(s_space=GameRepresentation.get_vector_size(), action_space=A[1], objectives=None).model.nets["z"]
+    # model = Agent(s_space=GameRepresentation.get_vector_size(), action_space=A[1], objectives=None).model.nets["z"]
     
     
     t0 = time.time()
@@ -150,7 +150,7 @@ def didacticiel(game, k, save_path=None):
                     # print(u)
                     found += 1
                     list_pos.append((xi, yi))
-                    print((xi, yi))
+                    # print((xi, yi))
         # print(u.can_move, action, A[1][action])
         assert found == 1, found
         
@@ -158,29 +158,29 @@ def didacticiel(game, k, save_path=None):
         
         list_states.append(GameRepresentation.create_representation_from_game(game))
         
-        if action == "z" :
-            pred = model(list_states[-2].get_vector(list_pos[-1]).unsqueeze(0))
-            if torch.any(list_states[-1].get_vector(list_pos[-1]) != pred):
-                print(list_states[-2].get_vector(list_pos[-1])[:-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
-                print(list_states[-1].get_vector(list_pos[-1])[:-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
-                print(pred[0, :-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
-                print("ERROR")
-                time.sleep(10.)
+        # if action == "z" :
+            # pred = model(list_states[-2].get_vector(list_pos[-1]).unsqueeze(0))
+            # if torch.any(list_states[-1].get_vector(list_pos[-1]) != pred):
+            #     print(list_states[-2].get_vector(list_pos[-1])[:-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
+            #     print(list_states[-1].get_vector(list_pos[-1])[:-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
+            #     print(pred[0, :-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
+            #     print("ERROR")
+            #     time.sleep(10.)
         
-        if i > 0 and list_actions[i - 1] == "z" and \
-                np.any(list_states[i].map_state != list_states[i - 1].map_state) and \
-                (list_pos[i - 1][0] != list_pos[i][0] or list_pos[i][1] - list_pos[i - 1][1] != -1):
-            if np.any(list_states[i].map_state != list_states[i - 1].map_state):
-                a = list_states[i].get_vector(list_pos[i - 1]) - list_states[i - 1].get_vector(list_pos[i - 1])
-                a = a[:-GameRepresentation.PLAY_DESC].reshape(
-                    (len(GameRepresentation.COO), GameRepresentation.TILE_DESC))
-                print(t(a))
-                # print((list_states[i].map_state - list_states[i - 1].map_state).shape)
-            print(list_pos[i - 1][0] != list_pos[i][0])
-            print(list_pos[i][1] - list_pos[i - 1][1] != 1)
-            print(list_pos[i - 1], list_pos[i])
-            print("ERROR")
-            time.sleep(10.)
+        # if i > 0 and list_actions[i - 1] == "z" and \
+        #         np.any(list_states[i].map_state != list_states[i - 1].map_state) and \
+        #         (list_pos[i - 1][0] != list_pos[i][0] or list_pos[i][1] - list_pos[i - 1][1] != -1):
+        #     if np.any(list_states[i].map_state != list_states[i - 1].map_state):
+        #         a = list_states[i].get_vector(list_pos[i - 1]) - list_states[i - 1].get_vector(list_pos[i - 1])
+        #         a = a[:-GameRepresentation.PLAY_DESC].reshape(
+        #             (len(GameRepresentation.COO), GameRepresentation.TILE_DESC))
+        #         print(t(a))
+        #         print((list_states[i].map_state - list_states[i - 1].map_state).shape)
+            # print(list_pos[i - 1][0] != list_pos[i][0])
+            # print(list_pos[i][1] - list_pos[i - 1][1] != 1)
+            # print(list_pos[i - 1], list_pos[i])
+            # print("ERROR")
+            # time.sleep(10.)
     
     print((time.time() - t0) / len(list_actions))
     
@@ -247,24 +247,28 @@ def gen_dataset(size):
 
 
 def train_on_didacticiel(game, agent, agent_save_path=None, didacticiel_save_path=None,
-                         didacticiel_size=1000, test_size=0):
+                         didacticiel_size=1000):
     if agent_save_path is not None and os.path.isfile(agent_save_path):
         print("MODEL LOADED")
         agent.model.load_state_dict(torch.load(agent_save_path))
+        agent.model.eval()
+        GameRepresentation.CHECK = True
         return
     
-    test = gen_dataset(test_size) if test_size else None
+    # test = gen_dataset(test_size) if test_size else None
     
     game.reset()
     list_states, list_actions, list_pos = didacticiel(game, k=didacticiel_size, save_path=didacticiel_save_path)
     
     writer = SummaryWriter()
-    agent.learn(list_states, list_actions, list_pos, test=test, writer=writer)
+    agent.learn(list_states, list_actions, list_pos, test=.3, writer=writer)
     writer.close()
     
     if agent_save_path is not None:
         print("MODEL SAVED")
         torch.save(agent.model.state_dict(), agent_save_path)
+    agent.model.eval()
+    GameRepresentation.CHECK = True
 
 
 def main():
@@ -279,8 +283,8 @@ def main():
     engine_config.set_instant_building(False)  # Temps de latence ou non pour la construction
     engine_config.set_pomdp(False)  # Pas de brouillard (partie de la carte non visible)
     engine_config.set_console_caption_enabled(False)  # ne pas afficher des infos dans la console
-    engine_config.set_start_lumber(9999)  # Lumber de départ
-    engine_config.set_start_gold(9999)  # Or de départ
+    engine_config.set_start_lumber(500)  # Lumber de départ
+    engine_config.set_start_gold(500)  # Or de départ
     engine_config.set_instant_town_hall(False)  # Temps de latence ou non pour la construction d’un townhall
     engine_config.set_terminal_signal(True)  # Connaître la fin du jeu
     
@@ -320,7 +324,7 @@ def main():
             if tt != -1 and ss < tt:
                 res += tt - ss
         
-        res -= sum(s) * .0001
+        res -= sum(s) * .01
         return res
     
     def is_goal(s, t):
@@ -337,7 +341,14 @@ def main():
     
     game.reset()
     do_action(game, A_BUILD_TC)
+    game.players[0].do_manual_action(LEFT_CLICK, 3,8)
     do_action(game, A[1]["z"])
+    do_action(game, A[1]["d"])
+    do_action(game, A[1]["z"])
+    do_action(game, A[1]["d"])
+    # do_action(game, A[1]["d"])
+    # do_action(game, A[1]["d"])
+    # do_action(game, A[1]["z"])
     
     agent.reset(game)
     print("début de la partie")

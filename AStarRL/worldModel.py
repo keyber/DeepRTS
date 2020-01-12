@@ -5,6 +5,7 @@ import numpy as np
 LEFT_CLICK = 1
 
 
+# noinspection PyMethodOverriding
 class Clamp(torch.autograd.Function):
     @staticmethod
     def forward(_ctx, i, min_val, max_val):
@@ -15,7 +16,18 @@ class Clamp(torch.autograd.Function):
         return grad_output, None, None
 
 
-clamp = Clamp.apply
+
+
+class tens:
+    def __init__(self, a):
+        self.a = a
+    
+    def __eq__(self, other):
+        # noinspection PyTypeChecker
+        return torch.all(self.a == other.a)
+    
+    def __str__(self):
+        return str(np.where(self.a == 0, " ", np.where(self.a == 1, "+", "-")))
 
 
 class OneActionNet(nn.Module):
@@ -50,35 +62,38 @@ class OneActionNet(nn.Module):
             b[[i_tile_out * n + i for i in i_vec_changed]] = c
             
             for j in i_vec_check:
-                w[[i_tile_in  * n + i for i in i_vec_changed], i_tile_out * n + j] =  c
+                w[[i_tile_in * n + i for i in i_vec_changed], i_tile_out * n + j] = c
                 w[[i_tile_out * n + i for i in i_vec_changed], i_tile_out * n + j] = -c
             
             l[-1].weight.data = w
             l[-1].bias.data = b
-
+        
         self.layers = nn.Sequential(*l)
     
     def forward(self, x):
         res = self.layers(x)
         
         res = res + x
-        
-        res[:, :-GameRepresentation.PLAY_DESC] = clamp(res[:, :-GameRepresentation.PLAY_DESC], 0., 1.)
+
+        # noinspection PyUnresolvedReferences
+        # res[:, :-GameRepresentation.PLAY_DESC] = Clamp.apply(res[:, :-GameRepresentation.PLAY_DESC], 0., 1.)
         
         return res
 
 
 class GameRepresentation:
-    COO = np.array([(0, 2),
-                            (-1, 1), (0, 1), (1, 1),
-                            (-2, 0), (-1, 0), (0, 0), (1, 0), (2, 0),
-                            (-1, -1), (0, -1), (1, -1),
-                            (0, -2)])
-    #COO = np.array([(0, 1), (-1, 0), (0, 0), (1, 0), (0, -1)])
+    # COO = np.array([(0, 2),
+    #                 (-1, 1), (0, 1), (1, 1),
+    #                 (-2, 0), (-1, 0), (0, 0), (1, 0), (2, 0),
+    #                 (-1, -1), (0, -1), (1, -1),
+    #                 (0, -2)])
+    COO = np.array([(0, 1), (-1, 0), (0, 0), (1, 0), (0, -1)])
     TILE_DESC = 14
     PLAY_DESC = 4
     
     OUTSIDE = np.array([0, 1] + [0] * (TILE_DESC - 2))  # mur
+    
+    CHECK = False
     
     def __init__(self, map_state, player_state, obtained_from_coo=None, obtained_from_vector=None):
         # if type(player_state) is list:
@@ -89,6 +104,18 @@ class GameRepresentation:
         self.player_state = player_state
         self.obtained_from_coo = obtained_from_coo
         self.obtained_from_vector = obtained_from_vector
+        
+        if GameRepresentation.CHECK:
+            self.check()
+    
+    def check(self):
+        l = list(self.map_state.reshape(-1))
+        l2 = self.player_state
+        if type(l2) != list:
+            l2 = list(l2)
+        l += l2
+        # noinspection PyTypeChecker
+        GameRepresentation.is_correct_vector(torch.tensor(l).unsqueeze(0), raise_=True)
     
     @staticmethod
     def create_representation_from_game(game):
@@ -173,19 +200,67 @@ class GameRepresentation:
         return torch.tensor(res, dtype=dtype)
     
     def create_from_new_vector(self, coo, vector):
-        assert vector.dtype == int
+        # assert vector.dtype == int
         data = (vector.detach() + .5).int()
         
-        map_data = data[:-GameRepresentation.PLAY_DESC].reshape((-1, GameRepresentation.TILE_DESC))
+        map_data = data[:-GameRepresentation.PLAY_DESC]
+        map_data = map_data.reshape(len(GameRepresentation.COO), GameRepresentation.TILE_DESC)
         
         play_state = data[-GameRepresentation.PLAY_DESC:]
+        # assert torch.all(play_state > 0)
         
         map_state = self.map_state.copy()
-        for x, y in GameRepresentation.COO:
+        for i, (x, y) in enumerate(GameRepresentation.COO):
             if not self._is_outside(x + coo[0], y + coo[1]):
-                map_state[x + coo[0], y + coo[1]] = map_data[x, y]
+                map_state[x + coo[0], y + coo[1]] = map_data[i] 
         
         return GameRepresentation(map_state, play_state, coo, vector)
+    
+    @staticmethod
+    def is_correct_vector(vec, raise_=False):
+        # assert vec.shape[1] == GameRepresentation.get_vector_size()
+        try:
+            for vec in vec:
+                vec = (vec + .5).int()
+                
+                map_ = vec[:-GameRepresentation.PLAY_DESC].reshape((-1, GameRepresentation.TILE_DESC))
+                play = vec[-GameRepresentation.PLAY_DESC:]
+                
+                assert torch.all((map_ >= 0) & (map_ <= 1))
+                
+                # type de case
+                assert torch.all(torch.sum(map_[:, 0:5], dim=1) == 1)
+                
+                # type d'unité/bâtiment
+                assert torch.all(torch.sum(map_[:, 8:14], dim=1) <= 1)
+                
+                # non bâtiment ou non unité
+                assert torch.all(1 - map_[:, 6] + 1 - map_[:, 7] >= 1)
+                
+                # 6 ou 7 => 5==1 (ou 5==2)
+                assert torch.all(1 - (map_[:, 6] + map_[:, 7]) + map_[:, 5] == 1)
+                
+                # player
+                assert torch.all(play >= 0)
+                assert play[0] < 3
+                assert play[1] < 3
+                assert play[2] < 1000, play
+                assert play[3] < 1000
+        
+        except AssertionError as e:
+            if raise_:
+                # noinspection PyUnboundLocalVariable
+                print(tens(map_))
+                for x in map_:
+                    print(tens(x))
+                # noinspection PyUnboundLocalVariable
+                print(play)
+                print("{0}".format(e))
+                raise e
+            else:
+                return False, e
+        
+        return True, None
     
     def __eq__(self, other):
         return np.all(self.map_state == other.map_state) \
@@ -207,16 +282,42 @@ class WorldModel(nn.Module):
         self.nets = nn.ModuleDict(one_action_net)
     
     def forward_full(self, game_repres, pos, action):
-        v_out = self.forward_vec(action, game_repres, pos)
+        assert not self.training
         
+        v_out = self.forward_vec(action, game_repres, pos, check=True)
         return game_repres.create_from_new_vector(pos, v_out)
     
-    def forward_vec(self, action, game_repres=None, pos=None, v_in=None):
+    def forward_vec(self, action, game_repres=None, pos=None, v_in=None, check=False):
         if v_in is None:
             v_in = game_repres.get_vector(pos)
         
+        ndim = v_in.ndim
+        if ndim == 1:
+            v_in = v_in.unsqueeze(0)
+        
+        if check:
+            GameRepresentation.is_correct_vector(v_in, raise_=True)
+        
         # noinspection PyUnresolvedReferences
-        return self.nets[action](v_in)
+        res = self.nets[action](v_in)
+        
+        if check:
+            check = GameRepresentation.is_correct_vector(res)
+            if not check[0]:
+                print("forward vec error")
+                print(check[1].args)
+                
+                print(tens(v_in[0, :-GameRepresentation.PLAY_DESC].reshape((-1, GameRepresentation.TILE_DESC))))
+                print(v_in[0, -GameRepresentation.PLAY_DESC:])
+                
+                print(tens(res[0, :-GameRepresentation.PLAY_DESC].reshape((-1, GameRepresentation.TILE_DESC))))
+                print(res[0, -GameRepresentation.PLAY_DESC:])
+                GameRepresentation.is_correct_vector(res, raise_=True)
+        
+        if ndim == 1:
+            res = res.squeeze(0)
+        
+        return res
 
 
 def pprint(game_repr, p):
