@@ -2,7 +2,7 @@ import torch
 from DeepRTS import Engine
 from DeepRTS import python
 from agent import Agent
-from worldModel import GameRepresentation, tens
+from worldModel import GameRepresentation
 import time
 import os
 import random
@@ -107,14 +107,20 @@ def do_action(game, action, pos=None):
     #         return 
 
 
-def didacticiel(game, k, save_path=None):
+def didacticiel(game, k=3000, save_path=None):
     if save_path is not None and os.path.isfile(save_path + "_s.pth"):
         print("DIDACTICIEL LOADED")
         list_states, list_actions, list_pos = [torch.load(save_path + s + ".pth") for s in ["_s", "_a", "_p"]]
+        
+        assert type(list_states[0].player_state) is np.ndarray, type(list_states[0].player_state)
+        print("dida nb action", len(list_actions),
+              "starting state", list_states[0].player_state,
+              "final state", list_states[-1].player_state)
         return list_states, list_actions, list_pos
-
+    
     # model = Agent(s_space=GameRepresentation.get_vector_size(), action_space=A[1], objectives=None).model.nets["z"]
     
+    game.reset()
     
     t0 = time.time()
     p = game.players[0]
@@ -159,13 +165,13 @@ def didacticiel(game, k, save_path=None):
         list_states.append(GameRepresentation.create_representation_from_game(game))
         
         # if action == "z" :
-            # pred = model(list_states[-2].get_vector(list_pos[-1]).unsqueeze(0))
-            # if torch.any(list_states[-1].get_vector(list_pos[-1]) != pred):
-            #     print(list_states[-2].get_vector(list_pos[-1])[:-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
-            #     print(list_states[-1].get_vector(list_pos[-1])[:-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
-            #     print(pred[0, :-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
-            #     print("ERROR")
-            #     time.sleep(10.)
+        # pred = model(list_states[-2].get_vector(list_pos[-1]).unsqueeze(0))
+        # if torch.any(list_states[-1].get_vector(list_pos[-1]) != pred):
+        #     print(list_states[-2].get_vector(list_pos[-1])[:-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
+        #     print(list_states[-1].get_vector(list_pos[-1])[:-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
+        #     print(pred[0, :-GameRepresentation.PLAY_DESC].reshape((len(GameRepresentation.COO), -1)))
+        #     print("ERROR")
+        #     time.sleep(10.)
         
         # if i > 0 and list_actions[i - 1] == "z" and \
         #         np.any(list_states[i].map_state != list_states[i - 1].map_state) and \
@@ -176,11 +182,11 @@ def didacticiel(game, k, save_path=None):
         #             (len(GameRepresentation.COO), GameRepresentation.TILE_DESC))
         #         print(t(a))
         #         print((list_states[i].map_state - list_states[i - 1].map_state).shape)
-            # print(list_pos[i - 1][0] != list_pos[i][0])
-            # print(list_pos[i][1] - list_pos[i - 1][1] != 1)
-            # print(list_pos[i - 1], list_pos[i])
-            # print("ERROR")
-            # time.sleep(10.)
+        # print(list_pos[i - 1][0] != list_pos[i][0])
+        # print(list_pos[i][1] - list_pos[i - 1][1] != 1)
+        # print(list_pos[i - 1], list_pos[i])
+        # print("ERROR")
+        # time.sleep(10.)
     
     print((time.time() - t0) / len(list_actions))
     
@@ -194,81 +200,57 @@ def didacticiel(game, k, save_path=None):
         torch.save(list_pos, save_path + "_p.pth")
         print("DIDACTICIEL SAVED")
     
+    print("dida nb action", len(list_actions),
+          "starting state", list_states[0].player_state,
+          "final state", list_states[-1].player_state)
     return list_states, list_actions, list_pos
 
 
-def gen_dataset(size):
-    assert 0, "indices à revoir"  #todo
-    test = {}
-    a_2_iOut = {"z": 2, "q": 5, "s": 10, "d": 7}
-    
-    for a in "zqsd":
-        test_x = []
-        test_y = []
-        for _ in range(size):
-            i_in = 6
-            i_out = a_2_iOut[a]
-            
-            v = [[random.choice(possible_states[i]) for i in range(GameRepresentation.TILE_DESC)]
-                 for _ in range(len(GameRepresentation.COO))]
-            
-            for c in v:
-                if c[0] != 2:
-                    for i in range(1, GameRepresentation.TILE_DESC):
-                        c[i] = 0
-                if c[2] == 1 or c[3] == 1:
-                    c[1] = random.randint(1, 2)
-                if c[2] == 1:
-                    c[4] = random.choice([3, 4])
-                if c[3] == 1:
-                    c[4] = random.choice([1, 5, 7])
-            
-            v[i_in] = [2, 1, 0, 1, 1, .5, 8, 0, 0, 7, 0]
-            
-            p = [random.choice(possible_states_p[i]) for i in range(GameRepresentation.PLAY_DESC)]
-            
-            v_in = sum(v, [])
-            v_in += p
-            test_x.append(torch.tensor(v_in, dtype=torch.float32))
-            
-            t = v[i_out]
-            s = v[i_in]
-            
-            # déplacement si case libre et on est une unité 
-            if t[0] == 2 and t[1] == 0 and s[7] == 1:
-                v[i_in], v[i_out] = v[i_out], v[i_in]
-            
-            # p ne change pas
-            test_y.append(torch.tensor(sum(v, []) + p, dtype=torch.float32))
-        
-        test[a] = (torch.stack(test_x), torch.stack(test_y))
-    
-    return test
+vec_max = np.array([9,9,50,300])
+def rewarder(s1, s0):
+    return 10 if ((s1.player_state != s0.player_state) & (s0.player_state < vec_max)).any() else -.1
 
 
-def train_on_didacticiel(game, agent, agent_save_path=None, didacticiel_save_path=None,
-                         didacticiel_size=1000):
-    if agent_save_path is not None and os.path.isfile(agent_save_path):
-        print("MODEL LOADED")
-        agent.model.load_state_dict(torch.load(agent_save_path))
+def train_on_didacticiel(game, agent, agent_save_path=None, didacticiel_save_path=None):
+    if agent_save_path is not None and os.path.isfile(agent_save_path + "state_model.pth"):
+        agent.model.load_state_dict(torch.load(agent_save_path + "state_model.pth"))
+        print("STATE MODEL LOADED")
         agent.model.eval()
-        GameRepresentation.CHECK = True
         return
     
-    # test = gen_dataset(test_size) if test_size else None
-    
-    game.reset()
-    list_states, list_actions, list_pos = didacticiel(game, k=didacticiel_size, save_path=didacticiel_save_path)
+    list_states, list_actions, list_pos = didacticiel(game, save_path=didacticiel_save_path)
     
     writer = SummaryWriter()
-    agent.learn(list_states, list_actions, list_pos, test=.3, writer=writer)
+    agent.learn(list_states, list_actions, list_pos, rewarder=rewarder, test=.3, writer=writer)
     writer.close()
     
     if agent_save_path is not None:
-        print("MODEL SAVED")
-        torch.save(agent.model.state_dict(), agent_save_path)
+        torch.save(agent.model.state_dict(), agent_save_path + "state_model.pth")
+        print("STATE MODEL SAVED")
     agent.model.eval()
-    GameRepresentation.CHECK = True
+
+
+def train_value_on_didacticiel(game, agent, agent_save_path=None, didacticiel_save_path=None):
+    if agent_save_path is not None and os.path.isfile(agent_save_path + "value_model.pth"):
+        agent.value_model.load_state_dict(torch.load(agent_save_path + "value_model.pth"))
+        agent.reward_model.load(agent_save_path + "reward_model.pth")
+        # agent.reward_model.load_state_dict(torch.load(agent_save_path + "reward_model.pth"))
+        # agent.reward_model.eval()
+        print("VALUE MODEL LOADED")
+        agent.value_model.eval()
+        return
+    
+    list_states, list_actions, list_pos = didacticiel(game, save_path=didacticiel_save_path)
+    
+    agent.train_value_model(list_states, rewarder=rewarder)
+    
+    if agent_save_path is not None:
+        torch.save(agent.value_model.state_dict(), agent_save_path + "value_model.pth")
+        # torch.save(agent.reward_model.state_dict(), agent_save_path + "reward_model.pth")
+        agent.reward_model.save(agent_save_path + "reward_model.pth")
+        print("VALUE MODEL SAVED")
+    agent.value_model.eval()
+    # agent.reward_model.eval()
 
 
 def main():
@@ -283,7 +265,7 @@ def main():
     engine_config.set_instant_building(False)  # Temps de latence ou non pour la construction
     engine_config.set_pomdp(False)  # Pas de brouillard (partie de la carte non visible)
     engine_config.set_console_caption_enabled(False)  # ne pas afficher des infos dans la console
-    engine_config.set_start_lumber(500)  # Lumber de départ
+    engine_config.set_start_lumber(540)  # Lumber de départ
     engine_config.set_start_gold(500)  # Or de départ
     engine_config.set_instant_town_hall(False)  # Temps de latence ou non pour la construction d’un townhall
     engine_config.set_terminal_signal(True)  # Connaître la fin du jeu
@@ -316,17 +298,6 @@ def main():
         # [-1, 2, -1, -1],   # créer un péon
     ]
     
-    def H(s, t):
-        s = s.player_state
-        res = torch.zeros(1, dtype=torch.float32)
-        
-        for ss, tt in zip(s, t):
-            if tt != -1 and ss < tt:
-                res += tt - ss
-        
-        res -= sum(s) * .01
-        return res
-    
     def is_goal(s, t):
         for ss, tt in zip(s.player_state, t):
             if tt != -1 and ss < tt:
@@ -334,30 +305,30 @@ def main():
         return True
     
     # s_space = ((len(GameRepresentation.COO), GameRepresentation.TILE_DESC), GameRepresentation.PLAY_DESC)
-    agent = Agent(s_space=GameRepresentation.get_vector_size(), action_space=A[1], objectives=(targets[0], H, is_goal))
+    game_size = GameRepresentation.get_vector_full_size(game.get_height() * game.get_height())
+    agent = Agent(GameRepresentation.get_vector_size(), game_size, action_space=A[1], objectives=(targets[0], is_goal))
     
-    train_on_didacticiel(game, agent, agent_save_path="/home/keyvan/DeepRTS/AStarRL/world_model0.pth",
+    train_on_didacticiel(game, agent, agent_save_path="/home/keyvan/DeepRTS/AStarRL/",
                          didacticiel_save_path="/home/keyvan/DeepRTS/AStarRL/dida")
-    
+    train_value_on_didacticiel(game, agent, agent_save_path="/home/keyvan/DeepRTS/AStarRL/",
+                               didacticiel_save_path="/home/keyvan/DeepRTS/AStarRL/dida")
     game.reset()
     do_action(game, A_BUILD_TC)
-    game.players[0].do_manual_action(LEFT_CLICK, 3,8)
-    do_action(game, A[1]["z"])
-    do_action(game, A[1]["d"])
-    do_action(game, A[1]["z"])
-    do_action(game, A[1]["d"])
-    # do_action(game, A[1]["d"])
-    # do_action(game, A[1]["d"])
-    # do_action(game, A[1]["z"])
-    
+    game.players[0].do_manual_action(LEFT_CLICK, 3, 8)
+    # for a in "zdzdddzdddd":
+    #     do_action(game, A[1][a])
+    #     print(agent.value_model(GameRepresentation.create_representation_from_game(game).get_vector_full()).item())
+    # exit()
     agent.reset(game)
     print("début de la partie")
+
     while not game.is_terminal():
+        t0 = time.time()
         pos, a = agent.act()
-        print((pos[0], pos[1]), a, A[1][a])
+        print((pos[0], pos[1]), a, A[1][a], "%.1f" % (time.time() - t0))
         do_action(game, A[1][a], pos)
         
-        agent.get_result(game, _reward=0)
+        agent.get_result(game, reward=0)
 
 
 # a = np.arange(0,60).reshape((5,12))

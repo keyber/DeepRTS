@@ -19,6 +19,9 @@ sans BN
     instable, play et map ne convergent pas
     play apprend mieux avec lr=1e-3
 
+avec weight decay 1e-1
+    ne converge plus
+
 SGD au lieu de Adam
     très compliqué, l'entraînement s'arrête très vite
     il faut baisser le lr progressivement
@@ -49,7 +52,9 @@ done list:
     - programmer:
         - list[i-1] avec i=0
         - a = b==c avec b et c non broadcastables
+        - a = b[i] au lieu de b
         - __eq__, __str__, list.index(), "bisect"
+        - for i in reversed(): l.append() donnait le mauvais ordre
         - AStar
         
 
