@@ -56,7 +56,7 @@ def bfs(model, action_space, s0, R, V, t, is_goal, max_iter=150):
                         vr2 = -v2 - r2
                         
                         # état déjà vu, et on ne fait pas mieux
-                        if s2 in visited_states and vr2 >= visited_states[s2]: continue
+                        if ((xi,yi), s2) in visited_states and vr2 >= visited_states[((xi, yi), s2)]: continue
                         
                         # print("\t", a, v2)
                         
@@ -68,7 +68,7 @@ def bfs(model, action_space, s0, R, V, t, is_goal, max_iter=150):
                         dbg_node_list.append(nnode)
                         
                         heapq.heappush(opened_states, nnode)
-                        visited_states[s2] = vr2
+                        visited_states[((xi, yi), s2)] = vr2
     
     def f(id_, cpt=-1):
         if cpt != -1:

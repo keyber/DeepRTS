@@ -78,7 +78,7 @@ class WorldModel(nn.Module):
     def forward_full(self, game_repres, pos, action):
         assert not self.training
         
-        v_out = self.forward_vec(action, game_repres, pos, check=True)
+        v_out = self.forward_vec(action, game_repres, pos, check=GameRepresentation.DEBUG)
         return game_repres.create_from_new_vector(pos, v_out)
     
     def forward_vec(self, action, game_repres=None, pos=None, v_in=None, check=False):

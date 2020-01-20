@@ -107,7 +107,7 @@ def do_action(game, action, pos=None):
     #         return 
 
 
-def didacticiel(game, k=3000, save_path=None):
+def didacticiel(game, k=100, save_path=None):
     if save_path is not None and os.path.isfile(save_path + "_s.pth"):
         print("DIDACTICIEL LOADED")
         list_states, list_actions, list_pos = [torch.load(save_path + s + ".pth") for s in ["_s", "_a", "_p"]]
@@ -206,7 +206,9 @@ def didacticiel(game, k=3000, save_path=None):
     return list_states, list_actions, list_pos
 
 
-vec_max = np.array([9,9,50,300])
+vec_max = np.array([9, 9, 50, 300])
+
+
 def rewarder(s1, s0):
     return 10 if ((s1.player_state != s0.player_state) & (s0.player_state < vec_max)).any() else -.1
 
@@ -321,7 +323,8 @@ def main():
     # exit()
     agent.reset(game)
     print("début de la partie")
-
+    
+    i = 0
     while not game.is_terminal():
         t0 = time.time()
         pos, a = agent.act()
@@ -329,6 +332,10 @@ def main():
         do_action(game, A[1][a], pos)
         
         agent.get_result(game, reward=0)
+        
+        i+=1
+        if i==10:
+            exit()
 
 
 # a = np.arange(0,60).reshape((5,12))
